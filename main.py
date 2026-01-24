@@ -1,7 +1,6 @@
 # http_proxy.py - HTTP代理服务器
 import socket
 import threading
-#import sys
 import json
 import os
 
