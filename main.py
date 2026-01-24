@@ -2,12 +2,11 @@
 import socket
 import threading
 import json
-import os
 
 class HTTPProxy:
     def __init__(self, config_file='config.json'):
         # 加载配置文件
-        config_path = os.path.join(os.path.dirname(__file__), config_file)
+        config_path = config_file
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
