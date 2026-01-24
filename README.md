@@ -74,8 +74,6 @@ python test_proxy.py
 ### 代码结构
 - `main.py`: 主代理服务器实现
 - `config.json`: 配置文件
-- `test_proxy.py`: 功能测试脚本
-- `AGENTS.md`: 开发指南和编码规范
 
 ### 扩展功能
 
