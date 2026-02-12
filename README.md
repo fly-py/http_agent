@@ -1,95 +1,128 @@
-# HTTP Proxy Server
+# AGENTS.md - Coding Guidelines for AI Agents
 
-一个简单但功能强大的Python HTTP代理服务器，支持所有HTTP方法和HTTPS隧道。
+## Project Overview
+Python HTTP proxy server with threading support for HTTP and HTTPS tunneling.
 
-## 功能特性
+## Commands
 
-- 支持所有HTTP方法：GET, POST, PUT, DELETE, HEAD, OPTIONS, TRACE, CONNECT
-- HTTPS隧道支持（CONNECT方法）
-- 配置文件支持（JSON格式）
-- 多线程处理并发连接
-- 错误处理和超时机制
-- 详细的日志输出
-
-## 快速开始
-
-### 1. 配置
-
-编辑 `config.json` 文件来设置代理服务器的host和port：
-
-```json
-{
-  "host": "0.0.0.0",
-  "port": 8888
-}
-```
-
-### 2. 运行代理服务器
-
+### Running
 ```bash
 python main.py
 ```
 
-代理服务器将在配置的host和port上启动。
-
-### 3. 配置客户端
-
-将你的浏览器、应用程序或其他HTTP客户端配置为使用代理：
-
-- **Host**: 127.0.0.1 (或服务器IP)
-- **Port**: 8888 (或配置文件中的端口)
-
-#### 浏览器配置示例：
-- Chrome: 设置 > 系统 > 打开代理设置 > LAN设置 > 使用代理服务器
-- Firefox: 设置 > 网络设置 > 设置手动代理配置
-
-### 4. 测试
-
-运行测试脚本验证代理功能：
-
+### Testing
+No test framework configured yet. When tests are added:
 ```bash
-python test_proxy.py
+# Run all tests
+pytest
+
+# Run single test
+pytest test_file.py::test_function -v
+
+# Run with coverage
+pytest --cov=. --cov-report=term-missing
 ```
 
-## 支持的请求类型
+### Linting & Formatting
+No linting tools configured. Recommended setup:
+```bash
+# Format code
+black main.py
 
-代理服务器可以处理以下类型的请求：
+# Lint code
+flake8 main.py
 
-- **HTTP方法**: GET, POST, PUT, DELETE, HEAD, OPTIONS, TRACE
-- **HTTPS**: 通过CONNECT方法建立隧道
-- **自定义端口**: 支持非标准端口（如8080, 3000等）
-
-## 架构
-
-```
-客户端 -> HTTP代理 (main.py) -> 目标服务器
-    ^                           ^
-    |                           |
-    CONNECT隧道              直接转发
-  (HTTPS)                    (HTTP)
+# Type checking
+mypy main.py
 ```
 
-## 开发
+## Code Style Guidelines
 
-### 代码结构
-- `main.py`: 主代理服务器实现
-- `config.json`: 配置文件
+### General
+- Python 3.x compatibility required
+- Use UTF-8 encoding for all files
+- Maximum line length: 100 characters
 
-### 扩展功能
+### Imports
+- Standard library imports first
+- Group imports: stdlib, third-party, local
+- Use absolute imports
+- Example:
+```python
+import socket
+import threading
+import json
+import datetime
+```
 
-你可以修改代码来添加更多功能：
-- 请求过滤和修改
-- 缓存机制
-- 认证系统
-- 日志记录到文件
-- 性能监控
+### Naming Conventions
+- `PascalCase` for class names (e.g., `HTTPProxy`)
+- `snake_case` for functions and variables
+- `UPPER_CASE` for constants
+- Private methods: prefix with underscore `_private_method`
 
-## 注意事项
+### Types
+- Use type hints where practical
+- Document complex return types in docstrings
 
-- 这个代理服务器主要用于开发和测试目的
-- 生产环境使用时请考虑安全性和性能优化
-- 默认配置监听所有网络接口（0.0.0.0），生产环境请限制为特定接口
+### Error Handling
+- Use specific exceptions (`FileNotFoundError`, `json.JSONDecodeError`)
+- Always close sockets in `finally` blocks
+- Log errors with context before handling
+- Avoid bare `except:` clauses
+- Example:
+```python
+try:
+    with open(path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+except FileNotFoundError:
+    # Handle missing file
+    pass
+except json.JSONDecodeError as e:
+    # Handle invalid JSON
+    pass
+finally:
+    # Cleanup resources
+    socket.close()
+```
 
-## 许可证
+### Threading
+- Set daemon threads for background tasks: `thread.daemon = True`
+- Use locks for shared resources (`threading.Lock()`)
+- Set timeouts on sockets to prevent indefinite blocking
 
-本项目仅用于学习和测试目的。
+### Documentation
+- Use docstrings for classes and public methods
+- Keep comments in Chinese (existing convention)
+- Format: `"""Brief description"""`
+
+### Configuration
+- Use JSON for configuration files
+- Provide default values for all config options
+- Handle missing config gracefully with sensible defaults
+
+### Logging
+- Use the class `log()` method for consistency
+- Include context (client address, target host) in log messages
+- Log both to console and optionally to file
+
+## File Structure
+```
+.
+├── main.py          # Main proxy server implementation
+├── config.json      # Server configuration
+└── proxy.log        # Generated log file (if enabled)
+```
+
+## Key Classes
+- `HTTPProxy`: Main proxy server class
+  - `__init__(config_file)`: Initialize with config
+  - `start()`: Start the server
+  - `handle_client()`: Handle individual connections
+  - `tunnel()`: Bidirectional data forwarding
+
+## Important Notes
+- Server binds to `0.0.0.0` by default (all interfaces)
+- Default port: 8888 (configurable)
+- Supports HTTP and HTTPS (CONNECT method)
+- Threads are daemon threads (exits on main thread exit)
