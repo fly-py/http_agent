@@ -2,6 +2,7 @@
 import socket
 import threading
 import json
+import datetime
 
 class HTTPProxy:
     def __init__(self, config_file='config.json'):
@@ -12,13 +13,33 @@ class HTTPProxy:
                 config = json.load(f)
             self.host = config.get('host', '0.0.0.0')
             self.port = config.get('port', 8888)
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            print(f"警告: 无法加载配置文件 {config_file}: {e}")
-            print("使用默认配置: host=0.0.0.0, port=8888")
+            self.log_file = config.get('log_file', False)
+        except FileNotFoundError:
+            # 创建默认配置文件
+            default_config = {
+                "host": "0.0.0.0",
+                "port": 8888,
+                "log_file": False
+            }
+            with open(config_path, 'w', encoding='utf-8') as f:
+                json.dump(default_config, f, indent=4)
+            print(f"创建默认配置文件: {config_file}")
+            
+            # 重新加载配置
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            self.host = config.get('host', '0.0.0.0')
+            self.port = config.get('port', 8888)
+            self.log_file = config.get('log_file', False)
+        except json.JSONDecodeError as e:
+            print(f"警告: 配置文件格式错误 {config_file}: {e}")
+            print("使用默认配置: host=0.0.0.0, port=8888, log_file=False")
             self.host = '0.0.0.0'
             self.port = 8888
+            self.log_file = False
 
         self.running = True
+        self.log_lock = threading.Lock()
         
     def parse_request(self, data):
         """解析HTTP请求"""
@@ -31,9 +52,22 @@ class HTTPProxy:
             pass
         return None, None
     
+    def log_to_file(self, message):
+        """将日志写入文件"""
+        if self.log_file:
+            with self.log_lock:
+                with open('proxy.log', 'a', encoding='utf-8') as log_file:
+                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    log_file.write(f"[{timestamp}] {message}\n")
+    
+    def log(self, message):
+        """统一日志处理"""
+        print(message)
+        self.log_to_file(message)
+        
     def handle_client(self, client_socket, client_addr):
-        print(f"\n{'='*50}")
-        print(f"处理来自 {client_addr} 的新连接")
+        self.log(f"\n{'='*50}")
+        self.log(f"处理来自 {client_addr} 的新连接")
 
         try:
             request_data = client_socket.recv(8192)  # 增加缓冲区大小
@@ -49,7 +83,7 @@ class HTTPProxy:
                     remote_host = host_port[0]
                     remote_port = int(host_port[1]) if len(host_port) > 1 else 443
 
-                    print(f"建立HTTPS隧道到 {remote_host}:{remote_port}")
+                    self.log(f"建立HTTPS隧道到 {remote_host}:{remote_port}")
 
                     # 连接到远程服务器
                     remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -63,7 +97,7 @@ class HTTPProxy:
                     self.tunnel(client_socket, remote_socket)
 
                 except Exception as e:
-                    print(f"HTTPS隧道建立失败: {e}")
+                    self.log(f"HTTPS隧道建立失败: {e}")
                     client_socket.send(b'HTTP/1.1 502 Bad Gateway\r\n\r\n')
                     return
 
@@ -85,7 +119,7 @@ class HTTPProxy:
                             except ValueError:
                                 remote_port = 80
 
-                        print(f"转发{method}请求到 {host}:{remote_port}")
+                        self.log(f"转发{method}请求到 {host}:{remote_port}")
 
                         # 连接到目标服务器
                         remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -102,18 +136,18 @@ class HTTPProxy:
 
                         remote_socket.close()
                     else:
-                        print("无效的HTTP请求: 缺少Host头")
+                        self.log("无效的HTTP请求: 缺少Host头")
                         client_socket.send(b'HTTP/1.1 400 Bad Request\r\n\r\n')
 
                 except Exception as e:
-                    print(f"HTTP请求处理失败: {e}")
+                    self.log(f"HTTP请求处理失败: {e}")
                     try:
                         client_socket.send(b'HTTP/1.1 502 Bad Gateway\r\n\r\n')
                     except:
                         pass
             else:
                 # 处理非HTTP请求或无效请求
-                print(f"收到无效请求或不支持的协议: method={method}, url={url}")
+                self.log(f"收到无效请求或不支持的协议: method={method}, url={url}")
                 try:
                     # 尝试发送HTTP错误响应
                     client_socket.send(b'HTTP/1.1 400 Bad Request\r\n\r\n')
@@ -121,15 +155,15 @@ class HTTPProxy:
                     pass
 
         except Exception as e:
-            print(f"客户端处理错误: {e}")
+            self.log(f"客户端处理错误: {e}")
         finally:
             try:
                 client_socket.close()
-                print(f"连接 {client_addr} 已关闭")
-                print(f"{'='*50}\n")
+                self.log(f"连接 {client_addr} 已关闭")
+                self.log(f"{'='*50}\n")
             except Exception as e:
-                print(f"关闭连接 {client_addr} 时出错: {e}")
-                print(f"{'='*50}\n")
+                self.log(f"关闭连接 {client_addr} 时出错: {e}")
+                self.log(f"{'='*50}\n")
     
     def tunnel(self, client, server):
         """建立双向隧道"""
@@ -143,8 +177,8 @@ class HTTPProxy:
                         break
                     dest.sendall(data)
             except Exception as e:
-                # 只打印错误，不中断程序
-                print(f"隧道转发错误: {e}")
+                # 只记录错误，不中断程序
+                self.log(f"隧道转发错误: {e}")
                 pass
         
         threads = [
@@ -164,7 +198,7 @@ class HTTPProxy:
         server.bind((self.host, self.port))
         server.listen(5)
         
-        print(f"HTTP代理服务器启动在 {self.host}:{self.port}")
+        self.log(f"HTTP代理服务器启动在 {self.host}:{self.port}")
         
         try:
             while self.running:
@@ -173,7 +207,7 @@ class HTTPProxy:
                 thread.daemon = True
                 thread.start()
         except KeyboardInterrupt:
-            print("\n正在关闭服务器...")
+            self.log("\n正在关闭服务器...")
         finally:
             server.close()
 
