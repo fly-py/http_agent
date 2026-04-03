@@ -3,23 +3,47 @@ import socket
 import threading
 import json
 import datetime
+import os
 
 class HTTPProxy:
     def __init__(self, config_file='config.json'):
         # 加载配置文件
         config_path = config_file
+        
+        # 打印当前工作目录和配置文件路径，便于调试
+        print(f"当前工作目录: {os.getcwd()}")
+        print(f"尝试加载配置文件: {config_path}")
+        print(f"配置文件是否存在: {os.path.exists(config_path)}")
+        
+        self.blocked_domains = []  # 存储被禁止访问的域名
+        
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
+                print(f"成功加载配置文件，内容: {json.dumps(config, indent=2)}")
+            
             self.host = config.get('host', '0.0.0.0')
             self.port = config.get('port', 8888)
             self.log_file = config.get('log_file', False)
+            
+            # 加载被禁止的网站列表
+            self.blocked_domains = config.get('block', [])
+            print(f"原始block数据: {self.blocked_domains}")
+            
+            if isinstance(self.blocked_domains, list):
+                # 标准化域名：去除空白字符，转换为小写
+                self.blocked_domains = [domain.strip().lower() for domain in self.blocked_domains if domain.strip()]
+            else:
+                self.blocked_domains = []
+                
         except FileNotFoundError:
+            print(f"配置文件 {config_path} 不存在")
             # 创建默认配置文件
             default_config = {
                 "host": "0.0.0.0",
                 "port": 8888,
-                "log_file": False
+                "log_file": False,
+                "block": ["example.com"]  # 添加一个示例
             }
             with open(config_path, 'w', encoding='utf-8') as f:
                 json.dump(default_config, f, indent=4)
@@ -31,26 +55,108 @@ class HTTPProxy:
             self.host = config.get('host', '0.0.0.0')
             self.port = config.get('port', 8888)
             self.log_file = config.get('log_file', False)
+            self.blocked_domains = config.get('block', [])
+            if isinstance(self.blocked_domains, list):
+                self.blocked_domains = [domain.strip().lower() for domain in self.blocked_domains if domain.strip()]
+            else:
+                self.blocked_domains = []
+                
         except json.JSONDecodeError as e:
             print(f"警告: 配置文件格式错误 {config_file}: {e}")
-            print("使用默认配置: host=0.0.0.0, port=8888, log_file=False")
+            print("使用默认配置: host=0.0.0.0, port=8888, log_file=False, block=[]")
             self.host = '0.0.0.0'
             self.port = 8888
             self.log_file = False
+            self.blocked_domains = []
 
         self.running = True
         self.log_lock = threading.Lock()
+        
+        print(f"\n{'='*50}")
+        print(f"代理服务器配置:")
+        print(f"  主机: {self.host}")
+        print(f"  端口: {self.port}")
+        print(f"  日志文件: {self.log_file}")
+        print(f"  拦截域名列表: {self.blocked_domains}")
+        print(f"{'='*50}\n")
         
     def parse_request(self, data):
         """解析HTTP请求"""
         try:
             lines = data.decode('utf-8').split('\r\n')
             if lines:
-                method, url, version = lines[0].split(' ')
-                return method, url
+                parts = lines[0].split(' ')
+                if len(parts) >= 2:
+                    method = parts[0]
+                    url = parts[1]
+                    return method, url
         except:
             pass
         return None, None
+    
+    def extract_host_from_request(self, data):
+        """从HTTP请求中提取目标主机"""
+        try:
+            lines = data.decode('utf-8', errors='ignore').split('\r\n')
+            for line in lines:
+                if line.lower().startswith('host:'):
+                    host_part = line.split(':', 1)[1].strip()
+                    # 去除端口号
+                    host = host_part.split(':')[0]
+                    print(f"[DEBUG] 从HTTP请求提取到主机: {host}")
+                    return host.lower()
+        except Exception as e:
+            print(f"[DEBUG] 提取主机失败: {e}")
+        return None
+    
+    def extract_host_from_connect(self, url):
+        """从CONNECT请求中提取目标主机"""
+        try:
+            host_port = url.split(':')
+            host = host_port[0]
+            print(f"[DEBUG] 从CONNECT请求提取到主机: {host}")
+            return host.lower()
+        except:
+            pass
+        return None
+    
+    def is_blocked(self, host):
+        """检查域名是否被禁止访问"""
+        if not host or not self.blocked_domains:
+            return False
+        
+        host = host.lower()
+        for blocked in self.blocked_domains:
+            # 精确匹配或子域名匹配
+            if host == blocked or host.endswith('.' + blocked):
+                print(f"[DEBUG] 域名 {host} 匹配拦截规则: {blocked}")
+                return True
+        return False
+    
+    def send_forbidden_response(self, client_socket, host):
+        """发送403禁止访问响应"""
+        body = f"""<html>
+<head><title>403 Forbidden</title></head>
+<body>
+<h1>403 Forbidden</h1>
+<p>Access to <b>{host}</b> is forbidden by proxy policy.</p>
+<hr>
+<small>HTTP Proxy Server</small>
+</body>
+</html>"""
+        
+        response = f"""HTTP/1.1 403 Forbidden
+Content-Type: text/html; charset=utf-8
+Content-Length: {len(body)}
+Connection: close
+
+{body}"""
+        
+        try:
+            client_socket.send(response.encode('utf-8'))
+            print(f"[拦截] 向客户端发送403响应，阻止访问: {host}")
+        except Exception as e:
+            print(f"发送403响应失败: {e}")
     
     def log_to_file(self, message):
         """将日志写入文件"""
@@ -74,10 +180,27 @@ class HTTPProxy:
             if not request_data:
                 return
 
+            # 打印原始请求的前200个字符用于调试
+            try:
+                request_preview = request_data[:200].decode('utf-8', errors='ignore')
+                print(f"[DEBUG] 收到请求: {request_preview[:100]}...")
+            except:
+                pass
+
             method, url = self.parse_request(request_data)
+            print(f"[DEBUG] 方法: {method}, URL: {url}")
 
             if method == 'CONNECT' and url:
-                # HTTPS连接 - 处理所有CONNECT请求
+                # HTTPS连接 - 检查是否被禁止
+                remote_host = self.extract_host_from_connect(url)
+                
+                print(f"[DEBUG] CONNECT请求目标主机: {remote_host}")
+                
+                if self.is_blocked(remote_host):
+                    self.log(f"阻止HTTPS访问被禁止的网站: {remote_host}")
+                    self.send_forbidden_response(client_socket, remote_host)
+                    return
+                
                 try:
                     host_port = url.split(':')
                     remote_host = host_port[0]
@@ -98,11 +221,25 @@ class HTTPProxy:
 
                 except Exception as e:
                     self.log(f"HTTPS隧道建立失败: {e}")
-                    client_socket.send(b'HTTP/1.1 502 Bad Gateway\r\n\r\n')
+                    try:
+                        client_socket.send(b'HTTP/1.1 502 Bad Gateway\r\n\r\n')
+                    except:
+                        pass
                     return
 
             elif method and url:
                 # 处理所有其他HTTP方法 (GET, POST, PUT, DELETE, HEAD, OPTIONS, TRACE等)
+                # 提取目标主机
+                target_host = self.extract_host_from_request(request_data)
+                
+                print(f"[DEBUG] HTTP请求目标主机: {target_host}")
+                
+                # 检查是否被禁止访问
+                if target_host and self.is_blocked(target_host):
+                    self.log(f"阻止HTTP访问被禁止的网站: {target_host}")
+                    self.send_forbidden_response(client_socket, target_host)
+                    return
+                
                 try:
                     lines = request_data.decode('utf-8', errors='ignore').split('\r\n')
                     host_line = [l for l in lines if l.lower().startswith('host:')]
