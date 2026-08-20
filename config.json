@@ -3,7 +3,7 @@
     "port": 5120,
     "log_file": false,
     "block": [
-        "crazygames.plus",
-        "poki.com"
+        "example.com",
+        "domain.com"
     ]
 }
